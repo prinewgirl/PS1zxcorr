@@ -99,7 +99,7 @@ except IOError:
 
 
 tab = Table.read('data.fits').to_pandas()
-pixel_indices = hp.ang2pix(NSIDE, tab['RA'], tab['DEC'],lonlat=True).to_numpy()
+pixel_indices = hp.ang2pix(nside, tab['RA'], tab['DEC'],lonlat=True).to_numpy()
 ###############################################################################
 #Variables
 ###############################################################################
