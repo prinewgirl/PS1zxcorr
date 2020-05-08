@@ -93,8 +93,7 @@ try:
     f = open('data.fits')
 
 except IOError:
-    query = 'SELECT * FROM SpecAll'
-    result = GAMA.query_sql(query)
+    result = GAMA.query_sql('SELECT * FROM SpecAll')
     result.write('data.fits')
 
 
