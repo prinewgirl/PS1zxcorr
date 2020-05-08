@@ -79,9 +79,27 @@ parser.add_argument('--use_declination_strips' , action = 'store', dest = 'dec_s
 parser.add_argument('--declination_center'     , action = 'store', dest = 'dec_center'     , default = dec_center     , help = '')
 parser.add_argument('--declination_width'      , action = 'store', dest = 'dec_width'      , default = dec_width      , help = '')
 
+###############################################################################
+# priscila's own code
+from astroquery.gama import GAMA
+from astropy import coordinates
+from astropy.io import ascii
+import pandas as pd
+from astropy.io import ascii, fits
+from astropy.table import Table
 
 
+try:
+    f = open('data.fits')
 
+except IOError:
+    query = 'SELECT * FROM SpecAll'
+    result = GAMA.query_sql(query)
+    result.write('data.fits')
+
+
+tab = Table.read('data.fits').to_pandas()
+pixel_indices = hp.ang2pix(NSIDE, tab['RA'], tab['DEC'],lonlat=True).to_numpy()
 ###############################################################################
 #Variables
 ###############################################################################
@@ -145,7 +163,7 @@ if not os.environ.get('CASJOBS_PW'):
 
 
 ###############################################################################
-# The program start here
+# The program starts here
 ###############################################################################
 
 print("----> Starting PS1zxcorr code <----\n")
@@ -161,7 +179,7 @@ print("You'll use")
 print("NSIDE      : {}".format(params['NSIDE']))
 print("Num. Pixels: {}".format(params['NPIX']))
 
-strips = st.pixelstrips(params_strips) if params_strips['dec strips'] else np.arange(params['NPIX'])
+strips =  pixel_indices
 
 if not restart:
 	import file_verification as ver
