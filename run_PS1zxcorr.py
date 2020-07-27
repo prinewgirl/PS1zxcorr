@@ -16,7 +16,7 @@ import flags as fl
 import strips as st
 import write_read_fits as wr
 import maxnside as mx
-
+import file_verification as ver
 from time import time,strftime, gmtime
 
 ###################################################################
@@ -24,11 +24,13 @@ from time import time,strftime, gmtime
 ###################################################################
 
 if sys.version_info[0]==2:
-	import ConfigParser
-	config = ConfigParser.RawConfigParser()
+    import ConfigParser
+    config = ConfigParser.RawConfigParser()
+	
 elif sys.version_info[0]==3:
-	import configparser
-	config = configparser.ConfigParser()
+    import configparser
+    config = configparser.ConfigParser()
+	
 ###################################################################
 # This part is for extracting information from parameters.ini file
 ###################################################################
@@ -54,6 +56,9 @@ dec_strips      = config.getboolean("Strips","use_declination_strips")
 dec_center      = config.getfloat(  "Strips","declination_center")
 dec_width       = config.getfloat(  "Strips","declination_width")
 
+divide          = config.getboolean("Divide_of_sky_range","divide")
+Nparts          = config.getint(    "Divide_of_sky_range","Nparts")
+part            = config.getint(    "Divide_of_sky_range","part")
 
 ###############################################################################
 #You can modify any options in the parameters.ini file by the command terminal
@@ -79,26 +84,10 @@ parser.add_argument('--use_declination_strips' , action = 'store', dest = 'dec_s
 parser.add_argument('--declination_center'     , action = 'store', dest = 'dec_center'     , default = dec_center     , help = '')
 parser.add_argument('--declination_width'      , action = 'store', dest = 'dec_width'      , default = dec_width      , help = '')
 
-###############################################################################
-# priscila's own code
-from astroquery.gama import GAMA
-from astropy import coordinates
-from astropy.io import ascii
-import pandas as pd
-from astropy.io import ascii, fits
-from astropy.table import Table
+parser.add_argument('--divide'  , action = 'store', dest = 'divide'  , default = divide  , help = '')
+parser.add_argument('--Nparts'  , action = 'store', dest = 'Nparts'  , default = Nparts  , help = '')
+parser.add_argument('--part'    , action = 'store', dest = 'part'    , default = part    , help = '')
 
-
-try:
-    f = open('data.fits')
-
-except IOError:
-    result = GAMA.query_sql('SELECT * FROM SpecAll')
-    result.write('data.fits')
-
-
-tab = Table.read('data.fits').to_pandas()
-pixel_indices = hp.ang2pix(nside, tab['RA'], tab['DEC'],lonlat=True).to_numpy()
 ###############################################################################
 #Variables
 ###############################################################################
@@ -122,22 +111,22 @@ dec_strips      = bool(arguments.dec_strips)
 dec_center      = float(arguments.dec_center)
 dec_width       = float(arguments.dec_width)
 
-
-
+divide          = bool(arguments.divide)
+Nparts          = int(arguments.Nparts)
+part            = int(arguments.part)
 
 ###############################################################################
 # inputs
 ###############################################################################
 
-NSIDE         = nside
-constraints   = {"use":use_constraint, "type":type_constraint, "band": band_constraint} 
-params_flags  = {"use":use_flags, "table":table_flags, "band":band_flags}
-params_strips = {'dec strips':dec_strips,'dec center':dec_center,'dec width':dec_width}
-hexa_query    = hex_flags
+NSIDE          = nside
+constraints    = {"use":use_constraint, "type":type_constraint, "band": band_constraint} 
+params_flags   = {"use":use_flags, "table":table_flags, "band":band_flags}
+params_strips  = {'dec strips':dec_strips,'dec center':dec_center,'dec width':dec_width}
+hexa_query     = hex_flags
+divideSKYrange = {"divide":divide,"Nparts":Nparts,"part":part}
 
-del nside,use_constraint,type_constraint,band_constraint,use_flags,table_flags,band_flags,dec_strips,dec_center,dec_width,hex_flags
-
-
+del nside, use_constraint, type_constraint, band_constraint, use_flags, table_flags,band_flags, dec_strips,dec_center, dec_width, hex_flags, part, Nparts, divide
 ###############################################################################
 # Access PS1 server
 ###############################################################################
@@ -160,49 +149,82 @@ if not os.environ.get('CASJOBS_WSID'):
 if not os.environ.get('CASJOBS_PW'):
     os.environ['CASJOBS_PW'] = pwd
 
-
 ###############################################################################
-# The program starts here
+# The program start here
 ###############################################################################
 
 print("----> Starting PS1zxcorr code <----\n")
 print("Calculating the maximum resolution that does not cause problems for your connection...")
 
-NPIX   = hp.nside2npix(NSIDE)
-params = {"NSIDE":NSIDE, "NPIX":NPIX} 
-params["NSIDE max"] = 8*mx.maxnside(user,pwd)
-params_strips['NSIDE']=params['NSIDE']
+NPIX                   = hp.nside2npix(NSIDE)
+params                 = {"NSIDE":NSIDE, "NPIX":NPIX} 
+params["NSIDE max"]    = 2**10#8*mx.maxnside(user,pwd)
+params_strips['NSIDE'] = params['NSIDE']
 
 print("Maximum resolution is NSIDE: {}\n".format(params['NSIDE max']))
 print("You'll use")
 print("NSIDE      : {}".format(params['NSIDE']))
 print("Num. Pixels: {}".format(params['NPIX']))
 
-strips =  pixel_indices
-
-if not restart:
-	import file_verification as ver
-	last   = ver.lastpix(NSIDE,"last")
-	if last:
-		strips = st.newtrips(strips,last)
-	else: pass	
-	
+strips = st.pixelstrips(params_strips) if params_strips['dec strips'] else np.arange(params['NPIX'])
 len_strips = len(strips)
+
+#if not restart:
+#	last   = ver.lastpix(NSIDE,"last")
+#	if last:
+#		strips = st.newtrips(strips,last)
+#	else: pass	
+#len_strips = len(strips)
+
 print("It will be {:.2f}% of the sky covered.\n".format(100*float(len_strips)/params['NPIX']))
 
-
-
-for num,pix in enumerate(strips):  
-    timei     = time()
-    theta,phi = hp.pix2ang(params['NSIDE'],pix, lonlat=True, nest=False)
-    
-    params['pixel'] = pix
-    tab, job        = qr.query_function(params, constraints)
-    tab             = gal.galaxies_pixel(tab,params)
-    tab             = fl.flags_constraints(tab,hexa_query,params_flags)
-    wr.write_fits(tab,params)
-
-    timef    = strftime('%H:%M:%S', gmtime(time()-timei))
-    print("Program's time (hh:mm:ss): {}".format(timef))
-    print("Pixel {}".format(pix))
-    print("{:.2f}% completed program\n \n".format(100*(float(num+1)/len_strips)))
+if divideSKYrange["divide"]:
+	import fraction_sky_range as fsr
+	print("Fractioning the range and taking the part {0}/{1}".format(divideSKYrange['part'],divideSKYrange['Nparts']))
+	strips = fsr.divideSKY(divideSKYrange,strips)
+#print(strips)
+#sys.exit(0)
+print("\n\n")
+for num,pix in enumerate(strips):
+	try:
+		timei     = time()
+		theta,phi = hp.pix2ang(params['NSIDE'],pix, lonlat=True, nest=False)
+		
+		params['pixel'] = pix
+		
+		if not ver.exist_or_not_file(params,restart):
+			print(ver.exist_or_not_file(params,restart))
+			tab, job        = qr.query_function(params, constraints)
+			tab             = gal.galaxies_pixel(tab,params)
+			tab             = fl.flags_constraints(tab,hexa_query,params_flags)
+			
+			timef           = strftime('%H:%M:%S', gmtime(time()-timei))
+			
+			print("Program's time (hh:mm:ss): {}".format(timef))
+			print("Pixel {}".format(pix))
+			print("{:.2f}% completed program".format(100*(float(num+1)/len_strips)))
+			
+			if len(tab)>0: wr.write_fits(tab,params)
+			else: print("Not save. 0 galaxies")
+			
+			print("\n\n")
+	
+	except KeyboardInterrupt:
+		sys.exit(0)
+	
+	except Exception as exc:
+		print("Error pixel")
+		str_nside = str(params["NSIDE"])
+		str_pix   = str(pix)
+		path = os.getcwd()
+		path = os.path.join(path,"ERRORS")
+		filename = ".".join(("_".join((str_nside,str_pix)),"err"))
+		ver.file_verification(path,filename,str_nside)
+		path = os.path.join(path,str_nside,filename)
+		err = str(sys.exc_info()[0])
+		f = open(path,"w+")
+		f.write(err)
+		f.write("\n")
+		f.write(str(exc))
+		f.close() 
+		
